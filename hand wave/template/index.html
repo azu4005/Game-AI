@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Twitch Stream and Handpose Detection</title>
+  <style>
+    /* Styling for the layout */
+    body {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      height: 100vh; /* Set the body height to the viewport height */
+      margin: 0px;
+      background-color: #001f3f; /* Dark background color */
+      font-family: 'Open Sans', sans-serif;
+      color: #FFFFFF; /* White text color */
+    }
+
+    #twitch-embed {
+      display: flex;
+      flex-direction: column;
+      width: 60%; /* Adjust width as needed */
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      background-color: #000000;
+    }
+
+    #detection-container {
+      position: relative;
+      width: 60%; /* Adjust width as needed */
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background-color: #020329;
+    }   
+
+    #detection-container h1 {
+      margin: 0; /* Remove default margin for h1 */
+      font-size: 1.5rem;
+      color: #FFFFFF;
+    }
+
+
+    #detection-container video {
+      width: 80%;
+      height: 60%;
+      object-fit: cover; /* Ensure the video fills the container */
+      box-shadow: 0 0 10px rgb(255, 145, 0);
+    }
+
+    #detection-container canvas {
+      position: absolute;
+      width: 80%;
+      height: 60%;
+      object-fit: cover; /* Ensure the video fills the container */
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Twitch stream embed -->
+  
+  <div id="twitch-embed"></div>
+
+  <!-- Handpose detection container -->
+  <div id="detection-container">
+    <h1>Smile and wave! You are on camera ;)</h1>
+    <video id="webcam-video" autoplay></video>
+    <canvas id="detection-canvas"></canvas>
+    <p id="coordinates-info"></p>
+    <p id="waveCount">Waves: 0</p>
+  </div>
+
+  <script src="https://embed.twitch.tv/embed/v1.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+  <script>
+    let predictions = [];
+    const userId = "{{ user_id }}";
+    function generateUUID() {
+      return crypto.randomUUID();
+    }
+  
+    function assignTeam() {
+      return Math.random() < 0.5 ? 'Team 0' : 'Team 1';
+    }
+  
+    // Generating a unique ID for the user
+    const userID = generateUUID();
+  
+    // Randomly assigning the user to a team
+    const userTeam = assignTeam();
+  
+    // You can now use userID and userTeam as needed, for example:
+    let waveCount = 0;
+    async function startHandposeDetection() {
+      // Twitch embed
+      new Twitch.Embed("twitch-embed", {
+        width: '100%',
+        height: '100%',
+        channel: "FightingIceAPG",
+      });
+      //let waveCount = 0;
+      let lastHandPosition = null; // Keeps track of the last hand position (left or right)
+
+      function detectWave(centerX, videoWidth) {
+          const leftThreshold = videoWidth * 0.3; // Left 10% of the screen
+          const rightThreshold = videoWidth * 0.7; // Right 90% of the screen
+
+          if (lastHandPosition === null) {
+              lastHandPosition = centerX < leftThreshold ? 'left' : 'right';
+          } else {
+              if (lastHandPosition === 'left' && centerX > rightThreshold) {
+                  waveCount++;
+                  lastHandPosition = 'right';
+                  updateWaveDisplay();
+              } else if (lastHandPosition === 'right' && centerX < leftThreshold) {
+                  lastHandPosition = 'left';
+              }
+          }
+      }
+
+      function updateWaveDisplay() {
+        const waveDisplay = document.getElementById('waveCount');
+        if (!waveDisplay) {
+            const newWaveDisplay = document.createElement('p');
+            newWaveDisplay.id = 'waveCount';
+            document.body.appendChild(newWaveDisplay);
+        }
+        document.getElementById('waveCount').innerText = `Waves: ${waveCount}`;
+        console.log(`Wave Count: ${waveCount}`); // Log to console
+    }
+
+      // Call this function inside your detectHandpose function
+      // For example, after calculating centerX and centerY
+      // detectWave(centerX, video.width);
+
+      const video = document.getElementById('webcam-video');
+      const canvas = document.getElementById('detection-canvas');
+      const ctx = canvas.getContext('2d');
+      const coordinatesInfo = document.getElementById('coordinates-info');
+
+      try {
+        const model = await handpose.load();
+
+        async function detectHandpose() {
+          predictions = await model.estimateHands(video);
+
+          if (predictions.length > 0) {
+            const hand = predictions[0].landmarks;
+            let sumX = 0;
+            let sumY = 0;
+            for (let i = 0; i < hand.length; i++) {
+              sumX += hand[i][0];
+              sumY += hand[i][1];
+            }
+            const centerX = sumX / hand.length;
+            const centerY = sumY / hand.length;
+            const scale = 0.55;
+
+            coordinatesInfo.innerText = `Hand Center  {X: ${centerX.toFixed(2)}, Y: ${centerY.toFixed(2)}}`;
+            detectWave(centerX, 720);
+
+            // Set canvas dimensions based on video dimensions
+            const videoRect = video.getBoundingClientRect();
+            canvas.width = videoRect.width;
+            canvas.height = videoRect.height;
+
+            // Clear previous drawings
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Scale applied
+            ctx.scale(scale, scale)
+
+
+            // Draw hand key points on the canvas
+            ctx.fillStyle = 'red';
+            for (let i = 0; i < hand.length; i++) {
+              ctx.beginPath();
+              ctx.arc(hand[i][0], hand[i][1], 5, 0, 2 * Math.PI);
+              ctx.fill();
+            }
+
+            // Reset the scale transformation
+            ctx.scale(1 / scale, 1 / scale);
+
+            //setInterval(sendCoordinatesToServer(waveCount),10000);
+          }
+
+          requestAnimationFrame(detectHandpose);
+        }
+
+        video.addEventListener('loadedmetadata', async () => {
+          detectHandpose();
+        });
+
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+              video: { frameRate: { ideal: 30 } }  // Requesting an ideal frame rate of 60 fps
+          });
+          video.srcObject = stream;
+      } else {
+          console.log('Error: getUserMedia not supported');
+      }
+      
+      } catch (error) {
+        console.error('Error during handpose detection:', error);
+      }
+    }
+    function startSendingData() {
+      const wavesend = waveCount;/* Retrieve the current wave count value */
+      sendCoordinatesToServer(wavesend);
+  }
+  
+  // Call startSendingData every 10 seconds
+    setInterval(startSendingData, 10000);
+    function sendCoordinatesToServer(waveCount) {
+      const dataToSend = {
+          userID: userId,  // Retrieved from Flask template
+          waveCount:  waveCount ,
+          userTeam: userTeam
+
+      };
+  
+      fetch('/send_waves', {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(dataToSend)
+      })
+      .then(response => {
+          if (!response.ok) {
+              throw new Error('Network response was not ok');
+          }
+          return response.json();
+      })
+      .then(data => console.log(data))
+      .catch(error => console.error('There has been a problem:', error));
+  }
+  
+
+    startHandposeDetection();
+  </script>
+</body>
+</html>
